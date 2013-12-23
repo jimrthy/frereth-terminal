@@ -1,10 +1,10 @@
 # frereth-terminal
 
-FIXME: description
+All great projects have some sort of command-line interface.
 
 ## Installation
 
-Download from http://example.com/FIXME.
+Just don't even bother. This isn't even barely worthy of such pretension.
 
 ## Usage
 
@@ -16,20 +16,21 @@ FIXME: explanation
 
 FIXME: listing of options this app accepts.
 
+Currently, there aren't any. Honestly, there probably never will be. I'm
+just tinkering.
+
 ## Examples
 
 ...
 
 ### Bugs
 
-...
-
-### Any Other Sections
-### That You Think
-### Might be Useful
+Absolutely none yet. There aren't even any features that I haven't bothered
+to document.
 
 ## License
 
-Copyright © 2013 FIXME
+Copyright © 2013 James Gatannah
 
 Distributed under the Eclipse Public License, the same as Clojure.
+

@@ -19,7 +19,9 @@
 (defn update [[delta time] state]
   ;; The important thing should be that this updates the state so
   ;; that...what can draw it?
-  (into state {:time time}))
+  (println "Updating:")
+  (println "Delta: " delta "\nTime: " time "\nState: " state)
+  (assoc state :time time))
 
 (defn display
   "I'm pretty sure this is supposed to actually draw the state that
@@ -47,7 +49,7 @@ Session restoration gets complicated."
 (defn key-press [key state]
   (cond
    (= :escape key) (app/stop!)
-   :else (into state (str (:text state) key))))
+   :else (assoc state :text (str (:text state) key))))
 
 (defn start
   "Run all the side-effects associated with starting a system"

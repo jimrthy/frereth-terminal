@@ -71,7 +71,8 @@ That's probably because I still have lots of bad habits."
                        ;; TODO: It's tempting to use some
                        ;; sort of java buffer
                        buffer ""]
-                  (if (keyword? c)
-                    (recur (async/<!! in) (handle-keyword out err buffer c))
-                    (recur (async/<!! in) (str buffer c)))))]
+                  (when c
+                    (if (keyword? c)
+                      (recur (async/<!! in) (handle-keyword out err buffer c))
+                      (recur (async/<!! in) (str buffer c))))))]
     result))

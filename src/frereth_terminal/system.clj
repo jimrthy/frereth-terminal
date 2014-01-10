@@ -35,7 +35,8 @@
   [state]
   ;; TODO: Save the current state so it can be restored during the next run.
   (println "Closing")
-  (println state))
+  (pprint state)
+  state)
 
 (defn update-screen-contents
   "This should really be pretty fancy and tricky, with lots of state manipulation.
@@ -76,6 +77,7 @@ The third is the actual scrolling in the first place."
   "Perform behind-the-scenes state updates just before display gets called each frame"
   [[delta time] state]
   ;; TODO: Don't really want to be handling STDERR here, but I have to start someplace
+  ;; This does not seem to be where my state is getting so thoroughly corrupted
   (async/thread (let [err (:err state)
                       result
                       (loop [to (async/timeout 1)
@@ -86,29 +88,42 @@ The third is the actual scrolling in the first place."
                                    (str error-message v))
                             error-message)))]
                   (when (seq result)
-                    (println result))))
+                    (pprint result))))
 
   ;; Actual output
-  (let [c (:output state)
-        ;; Don't spend more than 0.1 sec in here
-        final-timeout (async/timeout 100)]
-    ;; Append output sent from the "real process" 
-    (let [appended-text
-          ;; Don't wait more than 2 ms for 'shell' output
-          (loop [to (async/timeout 2)
-                 updated-text ""]
-            (let [[v resp] (async/alts!! [c to final-timeout])]
-              (if (= resp c)
-                (recur (async/timeout 2)
-                       (str updated-text v))
-                updated-text)))
-          original-text (:text state)
-          modified-text (update-screen-contents original-text appended-text)
-          result-text (prune-history original-text (:history-rules state))]
-      (assoc state
-        :text result-text
-        :delta-t delta
-        :time time))))
+  (if-let [c (:output state)]
+    (do
+      (comment
+        ;; Verified: This is good and gets called a lot.
+        ;; Right up until I handle a keystroke.
+        (println "Updating. Current State:")
+        (pprint state))
+
+      ;; Don't spend more than 0.1 sec in here
+      (let [final-timeout (async/timeout 100)]
+        ;; Append output sent from the "real process" 
+        (let [appended-text
+              ;; Don't wait more than 2 ms for 'shell' output
+              (loop [to (async/timeout 2)
+                     updated-text ""]
+                (let [[v resp] (async/alts!! [c to final-timeout])]
+                  (if (= resp c)
+                    (recur (async/timeout 2)
+                           (str updated-text v))
+                    updated-text)))
+              original-text (:text state)
+              modified-text (update-screen-contents original-text appended-text)
+              result-text (prune-history original-text (:history-rules state))]
+          (assoc state
+            :text result-text
+            :delta-t delta
+            :time time))))
+    (do
+      (println "Missing output channel!\nState:")
+      ;; I'm getting an async/channel here. WTF?
+      (pprint state)
+      (println \newline)
+      (throw (RuntimeException. "Initialization failure")))))
 
 (defn display
   "I'm pretty sure this is supposed to actually draw the state that
@@ -147,7 +162,8 @@ run, and update state to make things happen"
 (defn configure-window!
   [state]
   (update-title! (:title state))
-  (app/vsync! true))
+  (app/vsync! true)
+  state)
 
 (defn key-press
   "Send a key-press message to the function this provides the front-end for.
@@ -179,13 +195,18 @@ it doesn't much apply here."
     ;; of hardware resources" route.
     ;; TODO: Add a configuration option to decide how this gets sent.
     (async/go
-     (async/>! c key))))
+     (println "Handling Key Press: " key)
+     (async/>! c key)))
+  state)
 
 (defn start
   "Run all the side-effects associated with starting a system"
   [dead]
   (let [prev (restore-last-session dead)
         alive (bring-to-life prev repl/shell)]
+    (println "Bringing Good Things to life. Initial State:")
+    (pprint alive)
+
     (app/start
      {:init configure-window!
       :update update
@@ -197,10 +218,11 @@ it doesn't much apply here."
 (defn stop
   "Run all the side-effects to kill a system off"
   [living]
-  (wndo/destroy! (app/app))
-  (let [in (:input living)
-        out (:output living)
-        err (:std-err living)]
+  (if-let [main (app/app)]
+    (wndo/destroy! main)
+    (println "Warning: no application"))
+
+  (if-let [in (:input living)]
     ;; It's very tempting to send the shell some
     ;; sort of terminate signal via the :input
     ;; channel.
@@ -208,8 +230,9 @@ it doesn't much apply here."
     ;; If nothing else, it should just check for
     ;; nil coming from :input and wrap up because
     ;; that channel's closed.
-    
     (async/close! in)
+    (println "Warning: No STDIN"))
+
     ;; OTOH:
     ;; Honestly, the shell should close these when
     ;; it finishes with whatever it's doing.
@@ -217,15 +240,21 @@ it doesn't much apply here."
     ;; should continue to show whatever output it
     ;; portrays through them until it's actually
     ;; done.
-    (comment (async/close! out)
-             (async/close! err))
+  (if-let [out (:output living)]
+    (println "Waiting on the shell to exit and close STDOUT")
+    (println "Warning: Missing STDOUT"))
+  (if-let [err (:std-err living)]
+    (println "Waiting on the shell to exit and close STDERR")
+    (println "Warning: Missing STDERR"))
+
     ;; TODO: Wait until the shell thread is done.
     ;; Or, maybe, read from the original channel
     ;; that its creation should have returned when
     ;; it kicked off its go block.
     ;; Q: What should actually happen here?
-    (assoc living
-      :input nil
-      :output nil
-      :std-err nil
-      :shell nil)))
+    
+  (assoc living
+    :input nil
+    :output nil
+    :std-err nil
+    :shell nil))

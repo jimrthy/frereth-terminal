@@ -1,8 +1,10 @@
 (ns frereth-terminal.system
   (:require [clojure.core.async :as async]
+            [clojure.pprint :refer [pprint]]
             [frereth-terminal.frerepl :as repl]
             [penumbra.app :as app]
-            [penumbra.text :as text])
+            [penumbra.text :as text]
+            [penumbra.app.window :as wndo])
   (:gen-class))
 
 "I'm starting to think of this as a terminal emulator"
@@ -83,11 +85,8 @@ The third is the actual scrolling in the first place."
                             (recur (async/timeout 1)
                                    (str error-message v))
                             error-message)))]
-                  ;; This doesn't actually compile:
-                  ;; error-message was declared inside the loop.
-                  ;; FIXME: How should this be handled?
-                  (when (seq error-message)
-                    (println error-message))))
+                  (when (seq result)
+                    (println result))))
 
   ;; Actual output
   (let [c (:output state)
@@ -147,7 +146,7 @@ run, and update state to make things happen"
 
 (defn configure-window!
   [state]
-  (update-title! title)
+  (update-title! (:title state))
   (app/vsync! true))
 
 (defn key-press
@@ -198,7 +197,7 @@ it doesn't much apply here."
 (defn stop
   "Run all the side-effects to kill a system off"
   [living]
-  (app/close!)
+  (wndo/destroy! (app/app))
   (let [in (:input living)
         out (:output living)
         err (:std-err living)]

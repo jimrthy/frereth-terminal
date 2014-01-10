@@ -18,6 +18,45 @@ shows in response.
 
 This is intended to be guide for something along those lines."
 
+(defn prompt []
+  "> ")
+
+(defmulti handle-keyword
+  "Update buffer based on a special character we just received"
+  (fn [out err buffer c]
+    c))
+
+(defmethod handle-keyword :return
+  [out err buffer c]
+  (try
+    ;; See if we have a full expression
+    (let [expr (read-string buffer)]
+      (try
+        (let [result (eval expr)]
+          (async/>!! out "\n")
+          (async/>!! out result))
+        (catch RuntimeException ex
+          (async/>!! err ex)
+          ;; TODO: Print the stacktrace, also
+          ;; (FWIW)
+          ))
+      (async/>!! out "\n")
+      (async/>!! out (prompt))
+      "")
+    (catch RuntimeException ex
+      ;; This isn't really an exception, but
+      ;; it seems like it might be worth
+      ;; mentioning
+      (async/>!! err "Warning:\n")
+      (async/>!! ex)
+      (str buffer \newline))))
+
+(defmethod handle-keyword :default
+  [_ err buffer c]
+  (let [msg (str "Warning: unhandled keyword " c)]
+    (async/<!! err c))
+  buffer)
+
 (defn shell
   "I'm strongly tempted to do something like proxy/reify here.
 This seems like the sort of place where a stateful/OOP/functional
@@ -26,16 +65,13 @@ appropriate.
 
 That's probably because I still have lots of bad habits."
   [in out err]
-  (let [io (agent [in out err])]
-    ;; This is where life gets interesting.
-    ;; And the approach is probably mostly wrong.
-    ;; Should start a thread that reads from in and processes
-    ;; it, spitting the result to either out or err
-    ;; (depending on whether it's an exception or not).
-    ;;
-    ;; The form it's reading should really be stored in
-    ;; something like an agent
-    ;;
-    ;; Really need to deal with actual key strokes, backspaces,
-    ;; ctrl-chars, Unicode, etc, etc.
-    (throw (RuntimeException. "What should happen here?"))))
+  (async/>!! out (prompt))
+  (let [result (async/thread 
+                (loop [c (async/<!! in)
+                       ;; TODO: It's tempting to use some
+                       ;; sort of java buffer
+                       buffer ""]
+                  (if (keyword? c)
+                    (recur (async/<!! in) (handle-keyword out err buffer c))
+                    (recur (async/<!! in) (str buffer c)))))]
+    result))

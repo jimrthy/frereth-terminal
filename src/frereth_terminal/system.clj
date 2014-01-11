@@ -98,15 +98,11 @@ The third is the actual scrolling in the first place."
       (throw (RuntimeException. "Initialization failure"))))
 
   ;; Actual output
+  ;; TODO: Really shouldn't be testing this every time
+  ;; through the loop.
+  ;; Premature optimization
   (if-let [c (:output state)]
     (do
-      (comment
-        ;; Verified: This is good and gets called a lot.
-        ;; Right up until I handle a keystroke.
-        
-        (println "Updating. Current State:")
-        (pprint state))
-
       ;; Don't spend more than 0.1 sec in here
       (let [final-timeout (async/timeout 100)]
         ;; Append output sent from the "real process" 
@@ -122,8 +118,6 @@ The third is the actual scrolling in the first place."
               original-text (:text state)
               modified-text (update-screen-contents original-text appended-text)
               result-text (prune-history modified-text (:history-rules state))]
-          (when (seq appended-text)
-            (println "Appending output: " appended-text))
           (assoc state
             :text result-text
             :delta-t delta
@@ -204,8 +198,11 @@ it doesn't much apply here."
     ;; of hardware resources" route.
     ;; TODO: Add a configuration option to decide how this gets sent.
     (async/go
-     (println "Handling Key Press: " key)
      (async/>! c key)))
+  ;; It's very tempting to read the result back here.
+  ;; That's really the wrong thing to do, since it could really
+  ;; involve things like "move point to (x,y) and do a reverse
+  ;; highlight"
   state)
 
 (defn start

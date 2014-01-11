@@ -76,7 +76,6 @@ That's probably because I still have lots of bad habits."
                        ;; sort of java buffer
                        buffer ""]
                   (when c
-                    (println "Received keypress: " c)
                     (let [update
                           (if (keyword? c)
                             (handle-keyword out err buffer c)

@@ -168,9 +168,26 @@ run, and update state to make things happen"
   (app/vsync! true)
   state)
 
+(defn send-input
+  [message state]
+  (let [c (:input state)]
+    ;; There don't seem to be many reasons to make this happen in a
+    ;; background thread, but the only reasons not to do so involve
+    ;; keystrokes arriving in the wrong order...and I seriously doubt
+    ;; that anyone types fast enough for that to be an issue.
+    ;; Of course, that goes out the window as soon as someone puts a
+    ;; PTTY in front of this and we need to go back to worrying about
+    ;; things like parity bits and all the nonsense that really go
+    ;; along with low-level terminals.
+    ;; For now, go with the "I'm totally totally abusing the abundance
+    ;; of hardware resources" route.
+    ;; TODO: Add a configuration option to decide how this gets sent.
+    (async/go
+     (async/>! c message)))
+  state)
+
 (defn key-press
   "Send a key-press message to the function this provides the front-end for.
-TODO: Should really be forwarding along all messages.
 
 OTOH: It might make a whole lot more sense to establish the idea of 'focus'
 and send the message to whichever input channel has the focus. Which really
@@ -185,25 +202,20 @@ Having subscribers registering for interesting events seems like a mighty
 good compromise. It's definitely something interesting to think about, though
 it doesn't much apply here."
   [key state]
-  (let [c (:input state)]
-    ;; There don't seem to be many reasons to make this happen in a
-    ;; background thread, but the only reasons not to do so involve
-    ;; keystrokes arriving in the wrong order...and I seriously doubt
-    ;; that anyone types fast enough for that to be an issue.
-    ;; Of course, that goes out the window as soon as someone puts a
-    ;; PTTY in front of this and we need to go back to worrying about
-    ;; things like parity bits and all the nonsense that really go
-    ;; along with low-level terminals.
-    ;; For now, go with the "I'm totally totally abusing the abundance
-    ;; of hardware resources" route.
-    ;; TODO: Add a configuration option to decide how this gets sent.
-    (async/go
-     (async/>! c key)))
+
   ;; It's very tempting to read the result back here.
-  ;; That's really the wrong thing to do, since it could really
+  ;; That's really the wrong thing to do, since it could
   ;; involve things like "move point to (x,y) and do a reverse
   ;; highlight"
-  state)
+  (send-input key state))
+
+(defn key-down
+  [key state]
+  (send-input [:down key] state))
+
+(defn key-up
+  [key state]
+  (send-input [:up key] state))
 
 (defn start
   "Run all the side-effects associated with starting a system"

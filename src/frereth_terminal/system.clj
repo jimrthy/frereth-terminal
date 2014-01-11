@@ -77,18 +77,25 @@ The third is the actual scrolling in the first place."
   "Perform behind-the-scenes state updates just before display gets called each frame"
   [[delta time] state]
   ;; TODO: Don't really want to be handling STDERR here, but I have to start someplace
-  ;; This does not seem to be where my state is getting so thoroughly corrupted
-  (async/thread (let [err (:err state)
-                      result
-                      (loop [to (async/timeout 1)
-                             error-message ""]
-                        (let [[v c] (async/alts!! [err to])]
-                          (if (= c err)
-                            (recur (async/timeout 1)
-                                   (str error-message v))
-                            error-message)))]
-                  (when (seq result)
-                    (pprint result))))
+  ;; Definitely don't want to handle it synchronously. But that seems better than
+  ;; spawning a ton of threads that are fighting for this particular resource.
+  ;; N.B. Running this in an async/thread wasn't actually running it.
+  ;; Apparently I don't have any sort of grasp on the way those work.
+  (if-let [err (:std-err state)]
+    (let [result
+          (loop [to (async/timeout 1)
+                 error-message ""]
+            (let [[v c] (async/alts!! [err to])]
+              (if (= c err)
+                (recur (async/timeout 1)
+                       (str error-message v))
+                error-message)))]
+      (when (seq result)
+        (pprint result)))
+    (do
+      (println "Error: missing STDERR channel")
+      (pprint state)
+      (throw (RuntimeException. "Initialization failure"))))
 
   ;; Actual output
   (if-let [c (:output state)]
@@ -96,6 +103,7 @@ The third is the actual scrolling in the first place."
       (comment
         ;; Verified: This is good and gets called a lot.
         ;; Right up until I handle a keystroke.
+        
         (println "Updating. Current State:")
         (pprint state))
 
@@ -113,14 +121,15 @@ The third is the actual scrolling in the first place."
                     updated-text)))
               original-text (:text state)
               modified-text (update-screen-contents original-text appended-text)
-              result-text (prune-history original-text (:history-rules state))]
+              result-text (prune-history modified-text (:history-rules state))]
+          (when (seq appended-text)
+            (println "Appending output: " appended-text))
           (assoc state
             :text result-text
             :delta-t delta
             :time time))))
     (do
       (println "Missing output channel!\nState:")
-      ;; I'm getting an async/channel here. WTF?
       (pprint state)
       (println \newline)
       (throw (RuntimeException. "Initialization failure")))))

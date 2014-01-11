@@ -33,7 +33,6 @@ This is intended to be guide for something along those lines."
     (let [expr (read-string buffer)]
       (try
         (let [result (eval expr)]
-          (println result)
           (async/>!! out "\n")
           (async/>!! out result))
         (catch RuntimeException ex

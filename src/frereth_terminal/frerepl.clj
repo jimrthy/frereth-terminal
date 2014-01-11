@@ -33,6 +33,7 @@ This is intended to be guide for something along those lines."
     (let [expr (read-string buffer)]
       (try
         (let [result (eval expr)]
+          (println result)
           (async/>!! out "\n")
           (async/>!! out result))
         (catch RuntimeException ex
@@ -47,14 +48,17 @@ This is intended to be guide for something along those lines."
       ;; This isn't really an exception, but
       ;; it seems like it might be worth
       ;; mentioning
-      (async/>!! err "Warning:\n")
-      (async/>!! ex)
+      (let [msg (str "Warning:\n"
+                     ex
+                     "\ntrying to evaluate:\n"
+                     buffer)]
+        (async/>!! err ex))
       (str buffer \newline))))
 
 (defmethod handle-keyword :default
   [_ err buffer c]
   (let [msg (str "Warning: unhandled keyword " c)]
-    (async/<!! err c))
+    (async/>!! err c))
   buffer)
 
 (defn shell
@@ -65,14 +69,23 @@ appropriate.
 
 That's probably because I still have lots of bad habits."
   [in out err]
+  (println "Showing prompt")
   (async/>!! out (prompt))
-  (let [result (async/thread 
-                (loop [c (async/<!! in)
+  (let [result (async/go
+                (loop [c (async/<! in)
                        ;; TODO: It's tempting to use some
                        ;; sort of java buffer
                        buffer ""]
                   (when c
-                    (if (keyword? c)
-                      (recur (async/<!! in) (handle-keyword out err buffer c))
-                      (recur (async/<!! in) (str buffer c))))))]
+                    (println "Received keypress: " c)
+                    (let [update
+                          (if (keyword? c)
+                            (handle-keyword out err buffer c)
+                            (do
+                              (async/>! out c)
+                              (str buffer c)))]
+                      (recur (async/<! in) update))))
+                (println "Cleaning up REPL shell")
+                (async/close! out)
+                (async/close! err))]
     result))

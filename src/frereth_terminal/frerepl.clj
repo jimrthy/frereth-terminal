@@ -1,5 +1,6 @@
 (ns frereth-terminal.frerepl
-  (:require [clojure.core.async :as async])
+  (:require [clojure.core.async :as async]
+            [clojure.repl :refer [pst]])
   (:gen-class))
 
 "A terminal's pretty boring without some sort of communication.
@@ -44,6 +45,33 @@ Possibly send feedback if it's something that should be visible"
   (fn [state c]
     c))
 
+(defmacro with-err-str
+  "Evaluates exprs in a context in which *err* is bound to a fresh
+StringWriter. Returns the string created by any nested printing calls.
+
+Shamelessly stolen from
+stackoverflow.com/questions/17314128/get-stack-trace-as-string
+
+The real point is to get a stack trace.
+Note that it would [almost definitely] be better to just do that."
+  [& body]
+  `(let [s# (new java.io.StringWriter)]
+     ;; This seems to depend pretty heavily on execution
+     ;; remaining under this particular thread of control.
+     ;; Considering the use-case, that seems acceptable.
+     (binding [*err* s#]
+       ~@body
+       (str s#))))
+
+(defn tb->string
+  ([^Exception ex]
+     (tb->string ex 30))
+  ([^Exception ex ^long depth]
+     (let [out (java.io.StringWriter.)]
+       (binding [*err* out]
+         (pst ex depth)
+         (str out)))))
+
 (defmethod handle-keyword :return
   [state c]
   (if-let [buffer (:buffer state)]
@@ -61,7 +89,8 @@ Possibly send feedback if it's something that should be visible"
                   (async/>!! err ex)
                   ;; TODO: Print the stacktrace, also
                   ;; (FWIW)
-                  ))
+                  (let [tb (with-err-str (pst ex 30))]
+                    (async/>!! err tb))))
               ;; FIXME: Newlines don't work
               (async/>!! out "\n")
               (async/>!! out (prompt state))

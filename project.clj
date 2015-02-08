@@ -3,12 +3,14 @@
   :url "http://www.frereth.com"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :dependencies [[org.clojure/clojure "1.5.1"]
-                 [org.clojure/core.async "0.1.267.0-0d7780-alpha"]
-                 [jimrthy/penumbra "0.6.6-SNAPSHOT"]]
+  :dependencies [[com.frereth/penumbra "0.6.7-SNAPSHOT"]
+                 [org.clojure/clojure "1.7.0-alpha5"]
+                 [org.clojure/core.async "0.1.346.0-17112a-alpha"]]
   :main frereth-terminal.core
 
   :profiles {:dev {:source-paths ["dev"]
-                   :dependencies [[org.clojure/tools.namespace "0.2.4"]
-                                  [org.clojure/java.classpath "0.2.1"]]}}
+                   :dependencies [[com.stuartsierra/component "0.2.2"]
+                                  [org.clojure/tools.namespace "0.2.9"]
+                                  [org.clojure/java.classpath "0.2.2"]
+                                  [prismatic/schema "0.3.7"]]}}
   :repl-options {:init-ns user})

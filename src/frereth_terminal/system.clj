@@ -1,34 +1,31 @@
 (ns frereth-terminal.system
+  "I'm starting to think of this as a terminal emulator"
   (:require [clojure.core.async :as async]
             [clojure.pprint :refer [pprint]]
+            [com.stuartsierra.component :as component]
             [frereth-terminal.frerepl :as repl]
-            [penumbra.app :as app]
-            [penumbra.text :as text]
-            [penumbra.app.window :as wndo])
+            [penumbra.system :as app])
   (:gen-class))
 
-"I'm starting to think of this as a terminal emulator"
+(defn base-map
+  [overriding-config-options]
+  (component/system-map
+   :repl (repl/ctor overriding-config-options)
+   :penumbra (app/ctor overriding-config-options)))
 
-(set! *warn-on-reflection* true)
+(defn dependencies
+  [initial]
+  (component/system-using initial
+                          {:repl [:penumbra]L}))
 
 (defn init
   "Empty system to build upon later"
-  []
-  {:width 640
-   :height 480
-   :title "nothing happening yet"
-   :text ""
-   ;; For sending input messages from the user to...whatever program is running
-   :input nil
-   ;; For getting output from the "program" being run and providing feedback to
-   ;; the end-user
-   :output nil
-   ;; And suddenly this distinction makes a lot of sense
-   :std-err nil
-   ;; Place to hold rules for dealing with line history
-   :history-rules {}
-   ;; TODO: Start with current system time?
-   :time 0})
+  [overriding-config-options]
+  (set! *warn-on-reflection* true)
+  (let [cfg (into (config/defaults) overriding-config-options)]
+    ;; TODO: I really need to configure logging...don't I?
+    (-> (base-map cfg)
+        (dependencies))))
 
 (defn close
   "Window/app/terminal is going away"

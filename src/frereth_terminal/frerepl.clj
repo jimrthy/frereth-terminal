@@ -1,49 +1,82 @@
 (ns frereth-terminal.frerepl
+  "A terminal's pretty boring without some sort of communication.
+  This might someday be worth consideration as some sort of 
+  foot-in-the-door along those lines.
+
+  Comparing it to something like /bin/sh obviously involves lots of
+  delusions of grandeur.
+
+  But it might not be too pretentious to hope that someday it might
+  grow up to rival command.com.
+
+  The main point is that frerminal needs somewhere to send the input
+  it receives from the user, and a source for the feedback that it
+  shows in response.
+
+  This is intended to be guide for something along those lines."
   (:require [clojure.core.async :as async]
-            [clojure.repl :refer [pst]])
+            [clojure.repl :refer [pst]]
+            [com.stuartsierra.component :as component]
+            [penumbra.utils :as util]
+            [schema.core :as s])
+  (:import [clojure.lang Atom])
   (:gen-class))
 
-"A terminal's pretty boring without some sort of communication.
-This might someday be worth consideration as some sort of 
-foot-in-the-door along those lines.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Schema
 
-Comparing it to something like /bin/sh obviously involves lots of
-delusions of grandeur.
+(def terminal-state {buffer :- [s/Str]
+            first-visible-line :- s/Int
+            input-buffer :- s/Str
+            ps1 :- s/Str})
 
-But it might not be too pretentious to hope that someday it might
-grow up to rival command.com.
-
-The main point is that frerminal needs somewhere to send the input
-it receives from the user, and a source for the feedback that it
-shows in response.
-
-This is intended to be guide for something along those lines."
-
-(defn init []
-  {;; What's currently being manipulated?
-   ;; TODO: It's tempting to use some
-   ;; sort of java buffer
-   :buffer ""
-   ;; What's the state of everything?
-   :keys {}
-   :ps1 "> "})
-
-(defn start 
-  [dead]
-  dead)
-
-(defn stop
-  [alive]
-  alive)
-
-(defn prompt [state]
-  (:ps1 state))
+(declare event-loop)
+(s/defrecord Shell [state :- Atom  ; of terminal-state
+                    std-in :- util/async-channel
+                    std-out :- util/async-channel
+                    std-err :- util/async-channel
+                    worker :- util/async-channel]
+  component/Lifecycle
+  (start
+   [this]
+   (let [basics
+         (into this {:buffer (atom "")
+                     :std-in (async/chan)
+                     :std-out (async/chan)
+                     :std-err (async/chan)})]
+     (assoc basics :worker (event-loop basics))))
+  (stop
+   [this]
+   (doseq [c [std-in std-out std-err]]
+     (util/close-when! c))
+   ;; This next line is begging for trouble if something
+   ;; exits unexpectedly
+   (async/<!! worker)
+   (into this ({:buffer nil
+                :std-in nil
+                :std-out nil
+                :std-err nil
+                :worker nil}))))
 
 (defmulti handle-keyword
   "Update buffer based on a special character we just received.
 Possibly send feedback if it's something that should be visible"
   (fn [state c]
     c))
+
+(defmulti handle-compound
+  "This is really for finer control. Like tracking whether
+a control key is pressed. In the future, could be expanded to
+react to other events, like mouse clicks."
+  (fn
+    [state c]
+    (first c)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Internal
+
+(comment (defn prompt [state]
+           (:ps1 state)))
 
 (defmacro with-err-str
   "Evaluates exprs in a context in which *err* is bound to a fresh
@@ -93,7 +126,7 @@ Note that it would [almost definitely] be better to just do that."
                     (async/>!! err tb))))
               ;; FIXME: Newlines don't work
               (async/>!! out "\n")
-              (async/>!! out (prompt state))
+              (async/>!! out (:ps1 state))
               "")
             (catch RuntimeException ex
               ;; This isn't really an exception, but
@@ -145,14 +178,6 @@ Note that it would [almost definitely] be better to just do that."
                                      state "'")))))
   state)
 
-(defmulti handle-compound
-  "This is really for finer control. Like tracking whether
-a control key is pressed. In the future, could be expanded to
-react to other events, like mouse clicks."
-  (fn
-    [state c]
-    (first c)))
-
 (defn handle-key-change
   [state c which]
   (let [key-state (:keys state)
@@ -190,15 +215,16 @@ react to other events, like mouse clicks."
     (into state
           {:buffer (str buffer c)})))
 
-(defn event-loop [initial-state]
+(s/defn event-loop
+  [this :- Shell]
  (async/go
-  (let [in (:std-in initial-state)
-        out (:std-out initial-state)]
+  (let [in (:std-in this)
+        out (:std-out this)]
     (loop [c (async/<! in)
            ;; More importantly: this needs to be
            ;; a member of a map that tracks the
            ;; view of state on this side of things.
-           state initial-state]
+           state this]
       (when c
         (let [update
               (cond
@@ -214,27 +240,12 @@ react to other events, like mouse clicks."
                :else
                (handle-ordinary-key state c))]
           (recur (async/<! in) update))))
-    (println "Cleaning up REPL shell")
-    (async/close! out)
-    (let [err (:std-err initial-state)]
-      (async/close! err)))))
+    (println "Exiting REPL"))))
 
-(defn shell
-  "I'm strongly tempted to do something like proxy/reify here.
-This seems like the sort of place where a stateful/OOP/functional
-mix like you find in common lisp or scala seems *extremely*
-appropriate.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Public
 
-That's probably because I still have lots of bad habits."
-  [in out err]
-  (let [dead-state (init)
-        preliminary-state (start dead-state)]
-    (println "Showing prompt")
-    (async/>!! out (prompt preliminary-state))
-
-    (let [state
-          (into preliminary-state 
-                {:std-in in
-                 :std-out out
-                 :std-err err})]
-      (event-loop state))))
+(defn ctor
+  [{:keys [ps1]
+    :or {ps1 "> "}}]
+  (map->Shell {:ps1 ps1}))

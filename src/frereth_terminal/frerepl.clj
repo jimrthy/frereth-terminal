@@ -17,46 +17,83 @@
   (:require [clojure.core.async :as async]
             [clojure.repl :refer [pst]]
             [com.stuartsierra.component :as component]
+            [penumbra.app :as app]
+            [penumbra.app.manager :as manager]
             [penumbra.utils :as util]
             [schema.core :as s])
-  (:import [clojure.lang Atom])
+  (:import [clojure.lang Atom]
+           [com.stuartsierra.component SystemMap])
   (:gen-class))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Schema
 
-(def terminal-state {buffer :- [s/Str]
-            first-visible-line :- s/Int
-            input-buffer :- s/Str
-            ps1 :- s/Str})
+(def terminal-state {:buffer [s/Str]
+                     :first-visible-line s/Int
+                     :input-buffer s/Str
+                     :ps1 s/Str})
 
-(declare event-loop)
-(s/defrecord Shell [state :- Atom  ; of terminal-state
+(declare err-handler input-handler)
+(s/defrecord Shell [penumbra :- SystemMap
+                    state :- Atom  ; of terminal-state
                     std-in :- util/async-channel
                     std-out :- util/async-channel
                     std-err :- util/async-channel
+                    title :- s/Str
+                    janitor :- util/async-channel
                     worker :- util/async-channel]
   component/Lifecycle
   (start
    [this]
-   (let [basics
-         (into this {:buffer (atom "")
-                     :std-in (async/chan)
-                     :std-out (async/chan)
-                     :std-err (async/chan)})]
-     (assoc basics :worker (event-loop basics))))
+   (let [real-title (or title "Frerminal")
+         initial-state (into {:buffer [""]
+                              :first-visible-line 0
+                              :input-buffer ""
+                              :ps1 "frepl =>"}
+                             (or (and state @state)
+                                 {}))
+         ;; Need something useful to hand to event-loop
+         basics (into this {:state (atom initial-state)
+                            :std-in (async/chan)
+                            :std-out (async/chan)
+                            :std-err (async/chan)
+                            :title real-title})
+         ;; Penumbra <s>should</s> will handle this part
+         stage (assoc basics
+                      :worker (input-handler basics)
+                      :janitor (err-handler basics))
+         app (app/create-stage {:title title
+                                :initial-state initial-state
+                                ;; TODO: At the very least, it seems
+                                ;; like we probably want to handle
+                                ;; resize events.
+                                ;; Although, really, the framework
+                                ;; should handle those
+                                :callbacks {}
+                                :channels {:char-input std-in}})
+         mgr (:manager penumbra)]
+     ;; This fails. By definition, we need to supply an
+     ;; App here. But that's overkill for what we have and
+     ;; are doing.
+     ;; Or, at least, this approach is over-simplified
+     (manager/add-stage! mgr stage)
+     stage))
   (stop
    [this]
    (doseq [c [std-in std-out std-err]]
      (util/close-when! c))
    ;; This next line is begging for trouble if something
    ;; exits unexpectedly
-   (async/<!! worker)
-   (into this ({:buffer nil
-                :std-in nil
-                :std-out nil
-                :std-err nil
-                :worker nil}))))
+   (when worker
+     (async/<!! worker))
+   (when janitor
+     (async/<!! janitor))
+   (into this {:buffer nil
+               :std-in nil
+               :std-out nil
+               :std-err nil
+               :janitor nil
+               :worker nil})))
 
 (defmulti handle-keyword
   "Update buffer based on a special character we just received.
@@ -151,7 +188,7 @@ Note that it would [almost definitely] be better to just do that."
   (if-let [out (:std-out state)]
     (do
       (async/>!! out :backspace)
-      (let [buffer (:buffer state)
+      (let [^String buffer (:buffer state)
             len (.length buffer)]
         (into state
               {:buffer
@@ -215,31 +252,38 @@ Note that it would [almost definitely] be better to just do that."
     (into state
           {:buffer (str buffer c)})))
 
-(s/defn event-loop
+(s/defn err-handler :- util/async-channel
   [this :- Shell]
- (async/go
-  (let [in (:std-in this)
-        out (:std-out this)]
-    (loop [c (async/<! in)
-           ;; More importantly: this needs to be
-           ;; a member of a map that tracks the
-           ;; view of state on this side of things.
-           state this]
-      (when c
-        (let [update
-              (cond
-               ;; Magic key, like backspace, shift,
-               ;; or return
-               (keyword? c)
-               (handle-keyword state c)
-               ;; Something more specialized
-               (or (vector? c) (seq? c))
-               (handle-compound state c)
-               ;; Assume this means an ordinary
-               ;; character was typed
-               :else
-               (handle-ordinary-key state c))]
-          (recur (async/<! in) update))))
+  (async/go
+    (let [err (:std-err this)]
+      (loop []
+        (when-let [v (async/<! err)]
+          ;; TODO: Add things like timestamps and context
+          (println v)
+          (recur))))))
+
+(s/defn input-handler :- util/async-channel
+  [this :- Shell]
+  (async/go
+    (let [in (:std-in this)
+          out (:std-out this)]
+      (loop []
+        (when-let [c (async/<! in)]
+          (try          
+            (cond
+              ;; Magic key, like backspace, shift,
+              ;; or return
+              (keyword? c) (handle-keyword this c)
+              ;; Something more specialized
+              (or (vector? c) (seq? c)) (handle-compound this c)
+              ;; Assume this means an ordinary
+              ;; character was typed
+              :else (handle-ordinary-key this c))
+            (catch RuntimeException ex
+              ;; N.B. This isn't fatal!
+              (let [err (:std-err this)]
+                (async/>! err ex))))
+          (recur)))
     (println "Exiting REPL"))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

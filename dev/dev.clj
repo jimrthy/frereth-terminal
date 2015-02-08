@@ -6,6 +6,7 @@
             [clojure.repl :refer :all]
             [clojure.test :as test]
             [clojure.tools.namespace.repl :refer (refresh refresh-all)]
+            [com.stuartsierra.component :as component]
             [frereth-terminal.system :as sys]))
 
 (def system nil)
@@ -14,18 +15,18 @@
   "Constructs the current development system."
   []
   (alter-var-root #'system
-    (constantly (sys/init))))
+    (constantly (sys/init {}))))
 
 (defn start
   "Starts the current development system."
   []
-  (alter-var-root #'system sys/start))
+  (alter-var-root #'system component/start))
 
 (defn stop
   "Shuts down and destroys the current development system."
   []
   (alter-var-root #'system
-    (fn [s] (when s (sys/stop s)))))
+    (fn [s] (when s (component/stop s)))))
 
 (defn go-go
   "Initializes the current development system and starts it running.

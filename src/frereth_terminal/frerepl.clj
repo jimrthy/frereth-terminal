@@ -35,6 +35,7 @@
 
 (declare err-handler input-handler)
 (s/defrecord Shell [penumbra :- SystemMap
+                    stage
                     state :- Atom  ; of terminal-state
                     std-in :- util/async-channel
                     std-out :- util/async-channel
@@ -58,7 +59,7 @@
                             :std-out (async/chan)
                             :std-err (async/chan)
                             :title real-title})
-         ;; Penumbra <s>should</s> will handle this part
+         ;; These handlers need access to those channels to do anything interesting
          stage (assoc basics
                       :worker (input-handler basics)
                       :janitor (err-handler basics))
@@ -71,29 +72,36 @@
                                 ;; should handle those
                                 :callbacks {}
                                 :channels {:char-input std-in}})
+         first-step (component/start app)
+         window-started (-> app :window component/start)
+         started (assoc app :window window-started)
          mgr (:manager penumbra)]
      ;; This fails. By definition, we need to supply an
      ;; App here. But that's overkill for what we have and
      ;; are doing.
      ;; Or, at least, this approach is over-simplified
-     (manager/add-stage! mgr stage)
-     stage))
+     (manager/add-stage! mgr started)
+     (assoc stage :stage started)))
   (stop
    [this]
-   (doseq [c [std-in std-out std-err]]
-     (util/close-when! c))
-   ;; This next line is begging for trouble if something
-   ;; exits unexpectedly
-   (when worker
-     (async/<!! worker))
-   (when janitor
-     (async/<!! janitor))
-   (into this {:buffer nil
-               :std-in nil
-               :std-out nil
-               :std-err nil
-               :janitor nil
-               :worker nil})))
+   (let [stopped-window (-> stage :window component/stop)
+         app-with-stopped-window (assoc stage :window stopped-window)]
+     (doseq [c [std-in std-out std-err]]
+       (util/close-when! c))
+     ;; This next line is begging for trouble if something
+     ;; exits unexpectedly
+     (when worker
+       (async/<!! worker))
+     (when janitor
+       (async/<!! janitor))
+     (manager/clear-stage! (:manager penumbra) stage)
+     (into this {:buffer nil
+                 :stage (component/stop app-with-stopped-window)
+                 :std-in nil
+                 :std-out nil
+                 :std-err nil
+                 :janitor nil
+                 :worker nil}))))
 
 (defmulti handle-keyword
   "Update buffer based on a special character we just received.

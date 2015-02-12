@@ -16,9 +16,11 @@
   This is intended to be guide for something along those lines."
   (:require [clojure.core.async :as async]
             [clojure.repl :refer [pst]]
+            [clojure.pprint :refer [pprint]]
             [com.stuartsierra.component :as component]
             [penumbra.app :as app]
             [penumbra.app.manager :as manager]
+            [penumbra.text :as text]
             [penumbra.utils :as util]
             [schema.core :as s])
   (:import [clojure.lang Atom]
@@ -33,7 +35,7 @@
                      :input-buffer s/Str
                      :ps1 s/Str})
 
-(declare err-handler input-handler)
+(declare draw-frame err-handler input-handler)
 (s/defrecord Shell [penumbra :- SystemMap
                     stage
                     state :- Atom  ; of terminal-state
@@ -50,7 +52,7 @@
          initial-state (into {:buffer [""]
                               :first-visible-line 0
                               :input-buffer ""
-                              :ps1 "frepl =>"}
+                              :ps1 (constantly "frepl =>")}
                              (or (and state @state)
                                  {}))
          ;; Need something useful to hand to event-loop
@@ -70,7 +72,7 @@
                                 ;; resize events.
                                 ;; Although, really, the framework
                                 ;; should handle those
-                                :callbacks {}
+                                :callbacks {:display draw-frame}
                                 :channels {:char-input std-in}})
          started (component/start app)
          mgr (:manager penumbra)]
@@ -119,6 +121,24 @@ react to other events, like mouse clicks."
 
 (comment (defn prompt [state]
            (:ps1 state)))
+
+;; Completely arbitrary and ridiculous value because I have to start somewhere
+(def line-height 10)
+(defn draw-frame
+  [[dt t] state]
+  (let [top (:first-visible-line state)
+        possibly-visible-lines (drop top (:buffer state))
+        height (:height state)
+        max (int (/ height line-height))
+        bottom (+ top max)
+        previous-lines (take max possibly-visible-lines)
+        lines (if (< (count possibly-visible-lines) max)
+                (conj (list (str ((:ps1 state)) " " (:input-buffer state)))
+                      previous-lines))]
+    (println "Writing\n" lines "\nto the buffer, because of\n"
+             (with-out-str (pprint state)))
+    (dorun (map-indexed (fn [idx line]
+                          (text/write-to-screen line 0 (* idx line-height)))))))
 
 (defmacro with-err-str
   "Evaluates exprs in a context in which *err* is bound to a fresh

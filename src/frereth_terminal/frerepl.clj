@@ -48,6 +48,7 @@
   component/Lifecycle
   (start
    [this]
+   (println "Starting the Shell")
    (let [real-title (or title "Frerminal")
          initial-state (into {:buffer [""]
                               :first-visible-line 0
@@ -65,6 +66,7 @@
          stage (assoc basics
                       :worker (input-handler basics)
                       :janitor (err-handler basics))
+         _ (println "Creating the app")
          app (app/create-stage {:title title
                                 :initial-state initial-state
                                 ;; TODO: At the very least, it seems
@@ -74,12 +76,10 @@
                                 ;; should handle those
                                 :callbacks {:display draw-frame}
                                 :channels {:char-input std-in}})
+         _ (println "Starting the App")
          started (component/start app)
          mgr (:manager penumbra)]
-     ;; This fails. By definition, we need to supply an
-     ;; App here. But that's overkill for what we have and
-     ;; are doing.
-     ;; Or, at least, this approach is over-simplified
+     (println "Putting\n" started "\ninto\n" mgr)
      (manager/add-stage! mgr started)
      (assoc stage :stage started)))
   (stop

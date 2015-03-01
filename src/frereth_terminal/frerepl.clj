@@ -35,7 +35,7 @@
                      :input-buffer s/Str
                      :ps1 s/Str})
 
-(declare draw-frame err-handler input-handler)
+(declare draw-frame err-handler input-handler out-handler)
 (s/defrecord Shell [penumbra :- SystemMap
                     stage
                     state :- Atom  ; of terminal-state
@@ -43,7 +43,11 @@
                     std-out :- util/async-channel
                     std-err :- util/async-channel
                     title :- s/Str
+                    ;; Do something with error messages
                     janitor :- util/async-channel
+                    ;; Append output
+                    sink :- util/async-channel
+                    ;; Handle user input
                     worker :- util/async-channel]
   component/Lifecycle
   (start
@@ -64,8 +68,9 @@
                             :title real-title})
          ;; These handlers need access to those channels to do anything interesting
          stage (assoc basics
-                      :worker (input-handler basics)
-                      :janitor (err-handler basics))
+                      :janitor (err-handler basics)
+                      :sink (out-handler basics)
+                      :worker (input-handler basics))
          _ (println "Creating the app")
          app (app/create-stage {:title title
                                 :initial-state initial-state
@@ -86,9 +91,10 @@
    [this]
    (doseq [c [std-in std-out std-err]]
      (util/close-when! c))
-     ;; This next line is begging for trouble if something
-     ;; exits unexpectedly
 
+   ;; These next lines are begging for trouble if something
+   ;; exits unexpectedly
+   ;; TODO: Add a timeout
    (when worker
      (async/<!! worker))
    (when janitor
@@ -118,9 +124,6 @@ react to other events, like mouse clicks."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Internal
-
-(comment (defn prompt [state]
-           (:ps1 state)))
 
 ;; Completely arbitrary and ridiculous value because I have to start somewhere
 (def line-height 10)
@@ -158,6 +161,9 @@ Note that it would [almost definitely] be better to just do that."
        ~@body
        (str s#))))
 
+;; This seems like it really belongs
+;; elsewhere. Like frereth-common.
+;; TODO: Figure out where
 (defn tb->string
   ([^Exception ex]
      (tb->string ex 30))
@@ -166,6 +172,9 @@ Note that it would [almost definitely] be better to just do that."
        (binding [*err* out]
          (pst ex depth)
          (str out)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Input Event Handlers
 
 (defmethod handle-keyword :return
   [state c]
@@ -177,6 +186,7 @@ Note that it would [almost definitely] be better to just do that."
             (let [expr (read-string buffer)
                   out (:std-out state)]
               (try
+                ;; TODO: Feed this into nrepl instead
                 (let [result (eval expr)]
                   (async/>!! out "\n")
                   (async/>!! out result))
@@ -277,6 +287,9 @@ Note that it would [almost definitely] be better to just do that."
     (into state
           {:buffer (str buffer c)})))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Event Loops
+
 (s/defn err-handler :- util/async-channel
   [this :- Shell]
   (async/go
@@ -311,10 +324,23 @@ Note that it would [almost definitely] be better to just do that."
           (recur)))
     (println "Exiting REPL"))))
 
+(s/defn out-handler :- util/async-channel
+  [this :- Shell]
+  (async/go
+    (let [out (:std-out this)]
+      (loop []
+        (when-let [v (async/<! out)]
+          (swap! (:state this)
+                 (fn [current]
+                   ;; TODO: This probably shouldn't be infinite
+                   (assoc current :buffer (conj (:buffer current) v))))
+          (recur))))
+    (println "STDOUT closed")))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Public
 
 (defn ctor
   [{:keys [ps1]
-    :or {ps1 "> "}}]
+    :or {ps1 (constantly "> ")}}]
   (map->Shell {:ps1 ps1}))
